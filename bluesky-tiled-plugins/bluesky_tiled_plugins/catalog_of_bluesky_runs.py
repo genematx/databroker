@@ -1,4 +1,5 @@
 import collections.abc
+import copy
 import numbers
 import operator
 
@@ -7,6 +8,7 @@ from tiled.client.container import Container
 from tiled.client.utils import handle_error
 from tiled.utils import safe_json_dump
 
+from .bluesky_run import BlueskyRunV2
 from .queries import PartialUID, RawMongo, ScanID
 
 
@@ -33,9 +35,7 @@ class CatalogOfBlueskyRuns(Container):
         # with some modifications to extract scan_id from the metadata.
         sample = self.items()[:10]
         # Use scan_id (int) if defined; otherwise fall back to uid.
-        sample_reprs = [
-            repr(value.metadata["start"].get("scan_id", key)) for key, value in sample
-        ]
+        sample_reprs = [repr(value.metadata.get("start", {}).get("scan_id", key)) for key, value in sample]
         out = "<Catalog {"
         # Always show at least one.
         if sample_reprs:
@@ -56,7 +56,23 @@ class CatalogOfBlueskyRuns(Container):
         return out
 
     @property
+    def v1(self):
+        "Accessor to legacy interface."
+        if self._v1 is None:
+            from databroker.v1 import Broker
+
+            self._v1 = Broker(self)
+            self._v1._version = "1.0"
+        return self._v1
+
+    @property
     def v2(self):
+        structure_clients = copy.copy(self.structure_clients)
+        structure_clients.set("BlueskyRun", lambda: BlueskyRunV2)
+        return CatalogOfBlueskyRuns(self.context, item=self.item, structure_clients=structure_clients)
+
+    @property
+    def v3(self):
         return self
 
     def __getitem__(self, key):
@@ -94,9 +110,7 @@ class CatalogOfBlueskyRuns(Container):
             # Recurse.
             return [self[item] for item in key]
         else:
-            raise ValueError(
-                "Indexing expects a string, an integer, or a collection of strings and/or integers."
-            )
+            raise ValueError("Indexing expects a string, an integer, or a collection of strings and/or integers.")
 
     def _lookup_by_scan_id(self, scan_id):
         results = self.search(ScanID(scan_id, duplicates="latest"))
@@ -129,18 +143,7 @@ class CatalogOfBlueskyRuns(Container):
             query = RawMongo(start=query)
         return super().search(query)
 
-    @property
-    def v1(self):
-        "Accessor to legacy interface."
-        if self._v1 is None:
-            from databroker.v1 import Broker
-
-            self._v1 = Broker(self)
-        return self._v1
-
     def post_document(self, name, doc):
         link = self.item["links"]["self"].replace("/metadata", "/documents", 1)
-        response = self.context.http_client.post(
-            link, content=safe_json_dump({"name": name, "doc": doc})
-        )
+        response = self.context.http_client.post(link, content=safe_json_dump({"name": name, "doc": doc}))
         handle_error(response)
