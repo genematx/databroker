@@ -5,9 +5,8 @@ import json
 import keyword
 import warnings
 from datetime import datetime
-from collections import defaultdict
+from typing import Optional
 
-from event_model import StreamDatum, StreamResource
 from tiled.client.container import Container
 from tiled.client.utils import handle_error
 from tiled.utils import DictView, OneShotCachedMap, node_repr
@@ -15,7 +14,7 @@ import xarray
 
 from ._common import IPYTHON_METHODS
 from .bluesky_event_stream import BlueskyEventStreamV2SQL
-from .document import DatumPage, Descriptor, Event, EventPage, Resource, Start, Stop
+from .document import DatumPage, Descriptor, Event, EventPage, Resource, Start, Stop, StreamDatum, StreamResource
 
 _document_types = {
     "start": Start,
@@ -33,6 +32,9 @@ RESERVED_V3_KEYS = {"configs", "streams", "views", "aux"}
 
 
 class BlueskyRun(Container):
+    _ipython_display_ = None
+    _repr_mimebundle_ = None
+
     def __new__(cls, context, *, item, structure_clients, **kwargs):
         # When inheriting from BlueskyRun, return the class itself
         if cls is not BlueskyRun:
@@ -136,6 +138,11 @@ class BlueskyRun(Container):
 
 
 class BlueskyRunV2(BlueskyRun):
+    """A MongoDB-native layout of BlueskyRuns
+
+    This layout has been in use prior to the introduction of SQL backend in May 2025.
+    """
+
     _version = "2.0"
 
     def __new__(cls, context, *, item, structure_clients, **kwargs):
@@ -161,6 +168,9 @@ class BlueskyRunV2(BlueskyRun):
 
     @property
     def v3(self):
+        if not self._is_sql(self.item):
+            raise NotImplementedError("v3 is not available for MongoDB-based BlueskyRun")
+
         structure_clients = copy.copy(self.structure_clients)
         structure_clients.set("BlueskyRun", lambda: BlueskyRunV3)
         return BlueskyRunV3(self.context, item=self.item, structure_clients=structure_clients)
@@ -211,11 +221,31 @@ class _BlueskyRunSQL(BlueskyRun):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            key = "/".join(key)
+
+        if "/" in key:
+            key, rest = key.split("/", 1)
+            stream_container = self[key]
+            try:
+                return stream_container[rest]
+            except KeyError as e:
+                try:
+                    # The requested key might be a column in the "internal" table
+                    rest = rest.split("/")
+                    rest.insert(-1, "internal")
+                    return stream_container["/".join(rest)]
+                except KeyError:
+                    raise KeyError(f"Key '{rest[-1]}' not found in the BlueskyRun container") from e
+
+        return super().__getitem__(key)
+
     @functools.cached_property
     def _stream_names(self):
         return sorted(self.get("streams", ()))
 
-    def documents(self):
+    def documents(self, fill=False):
         with io.BytesIO() as buffer:
             self.export(buffer, format="application/json-seq")
             buffer.seek(0)
@@ -225,11 +255,11 @@ class _BlueskyRunSQL(BlueskyRun):
 
 
 class BlueskyRunV2SQL(BlueskyRunV2, _BlueskyRunSQL):
-    def _keys_slice(self, start, stop, direction, **kwargs):
+    def _keys_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
         keys = reversed(self._stream_names) if direction < 0 else self._stream_names
         return (yield from keys[start:stop])
 
-    def _items_slice(self, start, stop, direction, **kwargs):
+    def _items_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
         _streams_node = super().get("streams", {})
         for key in reversed(self._stream_names) if direction < 0 else self._stream_names:
             yield key, _streams_node.get(key)
@@ -242,12 +272,7 @@ class BlueskyRunV2SQL(BlueskyRunV2, _BlueskyRunSQL):
 
         if key in self._stream_names:
             stream_container = super().get("streams", {}).get(key)
-            stream_config = super().get("configs", {}).get(key)
-            return BlueskyEventStreamV2SQL.from_container_and_config(stream_container, stream_config)
-
-        if "/" in key:
-            key, rest = key.split("/", 1)
-            return self[key][rest]
+            return BlueskyEventStreamV2SQL.from_stream_client(stream_container)
 
         return super().__getitem__(key)
 
@@ -256,6 +281,8 @@ class BlueskyRunV2SQL(BlueskyRunV2, _BlueskyRunSQL):
 
 
 class BlueskyRunV3(_BlueskyRunSQL):
+    """A BlueskyRun that is backed by a SQL database."""
+
     _version = "3.0"
 
     def __new__(cls, context, *, item, structure_clients, **kwargs):
@@ -271,6 +298,18 @@ class BlueskyRunV3(_BlueskyRunSQL):
             return self["streams"][key]
 
         return super().__getattr__(key)
+
+    def __repr__(self):
+        metadata = self.metadata
+        datetime_ = datetime.fromtimestamp(metadata["start"]["time"])
+        return (
+            f"<BlueskyRun v{self._version} "
+            f"streams: {set(self._stream_names) or 'NONE'} "
+            f"scan_id={metadata['start'].get('scan_id', 'UNSET')!s} "  # (scan_id is optional in the schema)
+            f"uid={metadata['start']['uid'][:8]!r} "  # truncated uid
+            f"{datetime_.isoformat(sep=' ', timespec='minutes')}"
+            ">"
+        )
 
     @property
     def v1(self):

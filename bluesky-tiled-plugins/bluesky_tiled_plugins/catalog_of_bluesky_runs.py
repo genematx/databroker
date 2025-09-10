@@ -1,15 +1,17 @@
 import collections.abc
 import copy
+import functools
 import numbers
 import operator
 
 from tiled.adapters.utils import IndexCallable
 from tiled.client.container import Container
 from tiled.client.utils import handle_error
+from tiled.queries import Comparison, Eq, Like
 from tiled.utils import safe_json_dump
 
-from .bluesky_run import BlueskyRunV2
-from .queries import PartialUID, RawMongo, ScanID
+from .bluesky_run import BlueskyRunV2, BlueskyRunV3
+from .queries import RawMongo, ScanIDRange, TimeRange, _PartialUID, _ScanID
 
 
 class CatalogOfBlueskyRuns(Container):
@@ -73,7 +75,20 @@ class CatalogOfBlueskyRuns(Container):
 
     @property
     def v3(self):
-        return self
+        if not self.is_sql:
+            raise NotImplementedError("v3 is only available for SQL-based catalogs.")
+
+        structure_clients = copy.copy(self.structure_clients)
+        structure_clients.set("BlueskyRun", lambda: BlueskyRunV3)
+        return CatalogOfBlueskyRuns(self.context, item=self.item, structure_clients=structure_clients)
+
+    @functools.cached_property
+    def is_sql(self):
+        for spec in self.specs:
+            if spec.name == "CatalogOfBlueskyRuns":
+                if spec.version and spec.version.startswith("3."):
+                    return True
+                return False
 
     def __getitem__(self, key):
         # For convenience and backward-compatiblity reasons, we support
@@ -91,7 +106,7 @@ class CatalogOfBlueskyRuns(Container):
         elif isinstance(key, numbers.Integral):
             if key > 0:
                 # CASE 2: Interpret key as a scan_id.
-                return self._lookup_by_scan_id(key)
+                return self._lookup_by_scan_id(int(key))
             else:
                 # CASE 3: Interpret key as a recently lookup, as in
                 # `catalog[-1]` is the latest entry.
@@ -113,20 +128,29 @@ class CatalogOfBlueskyRuns(Container):
             raise ValueError("Indexing expects a string, an integer, or a collection of strings and/or integers.")
 
     def _lookup_by_scan_id(self, scan_id):
-        results = self.search(ScanID(scan_id, duplicates="latest"))
+        results = self.search(Eq("start.scan_id", scan_id))
         if not results:
             raise KeyError(f"No match for scan_id={scan_id}")
         else:
-            # By construction there must be only one result. Return it.
-            return results.values().first()
+            # Return latest match.
+            return results.values().last()
 
     def _lookup_by_partial_uid(self, partial_uid):
-        results = self.search(PartialUID(partial_uid))
+        if len(partial_uid) < 5:
+            raise ValueError(f"Partial uid {partial_uid!r} is too short. It must include at least 5 characters.")
+        if self.is_sql:
+            query = Like("start.uid", f"{partial_uid}%")
+        else:
+            query = _PartialUID(partial_uids=[partial_uid])
+        results = self.search(query).values().head(2)
+        if len(results) > 1:
+            raise ValueError(
+                f"Partial uid {partial_uid} has multiple matches. Include more characters to get a unique match."
+            )
         if not results:
             raise KeyError(f"No match for partial_uid {partial_uid}")
-        else:
-            # By construction there must be only one result. Return it.
-            return results.values().first()
+        # There is one unique result.
+        return results[0]
 
     def get_serializer(self):
         from tiled.server.app import get_root_tree
@@ -137,11 +161,49 @@ class CatalogOfBlueskyRuns(Container):
         return tree.get_serializer()
 
     def search(self, query):
+        # These query types were formerly handled server side by specially-registered
+        # queries. Now that are transformed client side into generic queries that
+        # come standard with the Tiled server.
+
+        # Some need to be expressed as a chain of queries.
+        if isinstance(query, TimeRange):
+            result = self
+            if query.since:
+                result = Container.search(result, Comparison("ge", "start.time", query.since))
+            if query.until:
+                result = Container.search(result, Comparison("lt", "start.time", query.until))
         # For backward-compatiblity, accept a dict and interpret it as a Mongo
         # query against the 'start' documents.
-        if isinstance(query, dict):
+        elif isinstance(query, _ScanID):
+            if len(query.scan_ids) > 1:
+                raise ValueError("Search on multiple ScanIDs in one query is no longer supported.")
+            (scan_id,) = query.scan_ids
+            query = Eq("start.scan_id", int(scan_id))
+            result = super().search(query)
+        elif isinstance(query, _PartialUID):
+            if len(query.partial_uids) > 1:
+                raise ValueError("Search on multiple PartialUIDs in one query is no longer supported.")
+            (partial_uid,) = query.partial_uids
+            if self.is_sql:
+                query = Like("start.uid", f"{partial_uid}%")
+            else:
+                query = _PartialUID(partial_uids=[partial_uid])
+            result = super().search(query)
+        elif isinstance(query, ScanIDRange):
+            ge = Comparison("ge", "start.scan_id", query.start_id)
+            lt = Comparison("lt", "start.scan_id", query.end_id)
+            result = super().search(ge).search(lt)
+        elif isinstance(query, dict):
             query = RawMongo(start=query)
-        return super().search(query)
+            result = super().search(query)
+        else:
+            if hasattr(query, "key"):
+                if not query.key.startswith("start.") or query.key.startswith("stop."):
+                    # Default to searching RunStart document.
+                    query = copy.copy(query)
+                    query.key = f"start.{query.key}"
+            result = super().search(query)
+        return result
 
     def post_document(self, name, doc):
         link = self.item["links"]["self"].replace("/metadata", "/documents", 1)

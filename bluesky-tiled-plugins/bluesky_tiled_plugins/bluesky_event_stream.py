@@ -2,10 +2,11 @@ import functools
 import keyword
 import warnings
 from collections import defaultdict
+from typing import Optional
 
 import numpy
 import xarray
-from tiled.client.composite import Composite
+from tiled.client.composite import CompositeClient
 from tiled.client.container import DEFAULT_STRUCTURE_CLIENT_DISPATCH, Container
 from tiled.utils import DictView, OneShotCachedMap, Sentinel, node_repr
 
@@ -16,6 +17,9 @@ TIMESTAMPS = Sentinel("TIMESTAMPS")
 
 
 class BlueskyEventStream(Container):
+    _ipython_display_ = None
+    _repr_mimebundle__ = None
+
     def __new__(cls, context, *, item, structure_clients, **kwargs):
         # When inheriting from BlueskyEventStream, return the class itself
         if cls is not BlueskyEventStream:
@@ -45,6 +49,7 @@ class BlueskyEventStreamV2Mongo(BlueskyEventStream):
         stream_name = self.metadata.get("stream_name") or self.item["id"]
         return f"<BlueskyEventStream {set(self)!r} stream_name={stream_name!r}>"
 
+    @property
     def descriptors(self):
         return self.metadata["descriptors"]
 
@@ -123,32 +128,38 @@ class BlueskyEventStreamV2SQL(OneShotCachedMap):
 
         return super().__getitem__(key)
 
-    @staticmethod
-    def format_config(config_client, timestamps=False):
-        records = config_client.read().to_list()
-        values = defaultdict(dict)
-        for rec in records:
-            if (rec.get("object_name") is not None) and (rec.get("value") is not None):
-                values[rec["object_name"]][rec["data_key"]] = (
-                    VirtualArrayClient(rec["timestamp"]) if timestamps else VirtualArrayClient(rec["value"])
-                )
-        result = {k: ConfigDatasetClient(v) for k, v in values.items()}
-        return VirtualContainer(result)
-
     @classmethod
-    def from_container_and_config(cls, stream_client, config_client, metadata=None):
-        stream_parts = set(stream_client.parts)
+    def from_stream_client(cls, stream_client, metadata=None):
+        stream_parts = set(stream_client.base.keys())
         data_keys = [k for k in stream_parts if k != "internal"]
         ts_keys = ["time"]
         if "internal" in stream_parts:
-            internal_cols = stream_client.parts["internal"].columns
+            internal_cols = stream_client.base["internal"].columns
             data_keys += [col for col in internal_cols if col != "seq_num" and not col.startswith("ts_")]
             ts_keys += [col for col in internal_cols if col.startswith("ts_")]
+
+        # Construct clients for the configuration data
+        cf_vals, cf_time = defaultdict(dict), defaultdict(dict)
+        if config := stream_client.metadata.get("configuration", {}):
+            updates = stream_client.metadata.get("_config_updates", [])
+            for obj_name, obj in config.items():
+                for key in obj["data"].keys():
+                    _vs, _ts = [obj["data"][key]], [obj["timestamps"][key]]
+
+                    # Add values and timestamps from config_updates
+                    for upd in updates:
+                        if upd_config := upd.get("configuration", {}):
+                            _vs.append(upd_config.get("data", {}).get(key))
+                            _ts.append(upd_config.get("timestamps", {}).get(key))
+
+                    cf_vals[obj_name][key] = VirtualArrayClient(_vs)
+                    cf_time[obj_name][key] = VirtualArrayClient(_ts)
+
         internal_dict = {
             "data": lambda: CompositeSubsetClient(stream_client, data_keys),
             "timestamps": lambda: CompositeSubsetClient(stream_client, ts_keys),
-            "config": lambda: cls.format_config(config_client, timestamps=False),
-            "config_timestamps": lambda: cls.format_config(config_client, timestamps=True),
+            "config": lambda: VirtualContainer({k: ConfigDatasetClient(v) for k, v in cf_vals.items()}),
+            "config_timestamps": lambda: VirtualContainer({k: ConfigDatasetClient(v) for k, v in cf_time.items()}),
         }
 
         # Construct the metadata
@@ -214,7 +225,7 @@ class ConfigDatasetClient(DictView):
         return xarray.Dataset.from_dict(d)
 
 
-class CompositeSubsetClient(Composite):
+class CompositeSubsetClient(CompositeClient):
     """A composite client with only a subset of its keys exposed."""
 
     def __init__(self, client, keys=None):
@@ -224,11 +235,11 @@ class CompositeSubsetClient(Composite):
     def __repr__(self):
         return node_repr(self, self._keys).replace(type(self).__name__, "DatasetClient")
 
-    def _keys_slice(self, start, stop, direction, _ignore_inlined_contents=False):
-        yield from self._keys[start : stop : -1 if direction < 0 else 1]
+    def _keys_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
+        yield from self._keys[start : stop : -1 if direction < 0 else 1]  # noqa: #203
 
-    def _items_slice(self, start, stop, direction, _ignore_inlined_contents=False):
-        for key in self._keys[start : stop : -1 if direction < 0 else 1]:
+    def _items_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
+        for key in self._keys[start : stop : -1 if direction < 0 else 1]:  # noqa: #203
             yield key, self[key]
 
     def __iter__(self):
@@ -307,7 +318,7 @@ class VirtualArrayClient:
         return self._dims
 
 
-class BlueskyEventStreamV3(BlueskyEventStream, Composite):
+class BlueskyEventStreamV3(BlueskyEventStream, CompositeClient):
     def __repr__(self):
         stream_name = self.metadata.get("stream_name") or self.item["id"]
         return f"<BlueskyEventStream {self._var_keys!r} stream_name={stream_name!r}>"
@@ -327,3 +338,12 @@ class BlueskyEventStreamV3(BlueskyEventStream, Composite):
             variables = self._ts_keys.union(variables) - {TIMESTAMPS}
 
         return super().read(variables=variables, dim0=dim0)
+
+    @functools.cached_property
+    def descriptors(self):
+        # Go back to the BlueskyRun node and requests the documents
+        stream_name = self.metadata.get("stream_name") or self.item["id"]
+        bs_run_node = self.parent.parent  # the path is: bs_run_node/streams/current_stream
+        return [
+            doc for name, doc in bs_run_node.documents() if name == "descriptor" and doc["name"] == stream_name
+        ]

@@ -1,3 +1,19 @@
+"""
+This module defines objects designed to make queries on
+CatalogOfBlueskyRuns convenient.
+
+Older clients used these query object to issue custom query types.
+This requires servers to register custom implementations of those
+query types.
+
+Newer clients use these object as pure client-side conveniences. In
+`CatalogOfBlueskyRuns.search` method, they are decomposed into standard Tiled
+queries, requiring no custom counterpart on the server.
+
+The registration and serialization aspects are (temporarily) retained in order
+to support older clients querying against MongoDB-backed servers.
+"""
+
 import enum
 import warnings
 from dataclasses import asdict, dataclass
@@ -117,17 +133,6 @@ class _PartialUID:
 def PartialUID(*partial_uids):
     # See comment above with ScanID and _ScanID. Same thinking here.
     return _PartialUID(partial_uids)
-
-
-@register(name="duration")
-@dataclass
-class Duration:
-    """
-    Run a MongoDB query against a given collection.
-    """
-
-    less_than: float
-    greater_than: float
 
 
 def RawMongo(start):
