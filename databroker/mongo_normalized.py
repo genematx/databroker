@@ -1559,7 +1559,7 @@ class MongoAdapter(collections.abc.Mapping, IndexersMixin):
             )  # `1 +` because we use a half-open interval
         else:
             cutoff_seq_num = 1
-        object_names = event_descriptors[0]["object_keys"]
+        object_names = event_descriptors[0].get("object_keys", {}).keys()
         run = self[run_start_uid]
         mapping = OneShotCachedMap(
             {
