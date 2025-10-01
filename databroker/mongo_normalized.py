@@ -417,8 +417,8 @@ class BlueskyRun(MapAdapter):
             # Insert Datum, Resource as needed, and then yield (name, doc).
             if name == "event":
                 for field in external_fields[doc["descriptor"]]:
-                    datum_id = doc["data"][field]
-                    if datum_ids not in datum_ids:
+                    datum_id = doc["data"].get(field, None)
+                    if (datum_id is not None) and (datum_id not in datum_ids):
                         # We haven't yielded this Datum yet. Look it up, and yield it.
                         try:
                             # Check to see if it's been pre-fetched.
