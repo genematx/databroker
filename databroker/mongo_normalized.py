@@ -427,9 +427,16 @@ class BlueskyRun(MapAdapter):
                             resource_uid = self.lookup_resource_for_datum(datum_id)
                             if resource_uid not in resource_uids:
                                 # We haven't yielded this Resource yet. Look it up, and yield it.
-                                resource = self.get_resource(resource_uid)
                                 resource_uids.add(resource_uid)
-                                yield ("resource", resource)
+                                try:
+                                    resource = self.get_resource(resource_uid)
+                                    yield ("resource", resource)
+                                except ValueError:
+                                    # We couldn't find the Resource.
+                                    logger.warning(
+                                        f"Could not find Resource with uid={resource_uid} "
+                                        f"referenced by Datum {datum_id!r}"
+                                    )
                                 # Pre-fetch *all* the Datum documents for this resource in one query.
                                 datum_cache.update(
                                     {doc["datum_id"]: doc for doc in self.get_datum_for_resource(resource_uid)}
