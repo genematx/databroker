@@ -395,7 +395,8 @@ class BlueskyRun(MapAdapter):
     def lookup_resource_for_datum(self, datum_id):
         doc = self._datum_collection.find_one({"datum_id": datum_id})
         if doc is None:
-            raise ValueError(f"Could not find Datum with datum_id={datum_id}")
+            # raise ValueError(f"Could not find Datum with datum_id={datum_id}")
+            return datum_id.split("/")[0]
         return doc["resource"]
 
     def single_documents(self, fill):
@@ -434,9 +435,10 @@ class BlueskyRun(MapAdapter):
                                     {doc["datum_id"]: doc for doc in self.get_datum_for_resource(resource_uid)}
                                 )
                                 # Now get the Datum we originally were looking for.
-                                datum = datum_cache.pop(datum_id)
+                                datum = datum_cache.pop(datum_id, None)
                             datum_ids.add(datum_id)
-                        yield ("datum", datum)
+                        if datum is not None:
+                            yield ("datum", datum)
             elif name == "descriptor":
                 # Track which fields ("data keys") hold references to external data.
                 external_fields[doc["uid"]] = {
