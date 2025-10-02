@@ -443,7 +443,7 @@ class BlueskyRun(MapAdapter):
                                 )
                                 # Now get the Datum we originally were looking for.
                                 datum = datum_cache.pop(datum_id, None)
-                            datum_ids.add(datum_id)
+                        datum_ids.add(datum_id)
                         if datum is not None:
                             yield ("datum", datum)
             elif name == "descriptor":
