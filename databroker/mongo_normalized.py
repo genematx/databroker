@@ -403,6 +403,7 @@ class BlueskyRun(MapAdapter):
         if fill:
             raise NotImplementedError("Only fill=False is implemented.")
         external_fields = {}  # map descriptor uid to set of external fields
+        skip_fields = set()   # set of external fields that are missing Resource documents and can be skipped
         datum_cache = {}  # map datum_id to datum document
         # Track which Resource and Datum documents we have yielded so far.
         resource_uids = set()
@@ -416,7 +417,7 @@ class BlueskyRun(MapAdapter):
         for name, doc in merged_iter:
             # Insert Datum, Resource as needed, and then yield (name, doc).
             if name == "event":
-                for field in external_fields[doc["descriptor"]]:
+                for field in external_fields[doc["descriptor"]] - skip_fields:
                     datum_id = doc["data"].get(field, None)
                     if (datum_id is not None) and (datum_id not in datum_ids):
                         # We haven't yielded this Datum yet. Look it up, and yield it.
@@ -436,6 +437,8 @@ class BlueskyRun(MapAdapter):
                                         f"Could not find Resource with uid={resource_uid} "
                                         f"referenced by Datum {datum_id!r}"
                                     )
+                                    skip_fields.add(field)
+                                    continue
                                 # Pre-fetch *all* the Datum documents for this resource in one query.
                                 datum_cache.update(
                                     {doc["datum_id"]: doc for doc in self.get_datum_for_resource(resource_uid)}
