@@ -420,10 +420,9 @@ class BlueskyRun(MapAdapter):
                     datum_id = doc["data"].get(field, None)
                     if (datum_id is not None) and (datum_id not in datum_ids):
                         # We haven't yielded this Datum yet. Look it up, and yield it.
-                        try:
-                            # Check to see if it's been pre-fetched.
-                            datum = datum_cache.pop(datum_id)
-                        except KeyError:
+                        if datum := datum_cache.pop(datum_id, None):
+                            pass
+                        else:
                             resource_uid = self.lookup_resource_for_datum(datum_id)
                             if resource_uid not in resource_uids:
                                 # We haven't yielded this Resource yet. Look it up, and yield it.
