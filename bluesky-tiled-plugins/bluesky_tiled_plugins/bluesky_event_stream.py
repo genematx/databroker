@@ -174,8 +174,12 @@ class BlueskyEventStreamV2SQL(OneShotCachedMap):
 
     @functools.cached_property
     def descriptors(self):
-        # Go back to the BlueskyRun node and requests the documents
-        bs_run_node = self["data"].parent.parent  # the path is: bs_run_node/streams/current_stream
+        # Go back to the BlueskyRun node and request the documents
+        # the path is: bs_run_node/streams/current_stream (old) or bs_run_node/current_stream (new)
+        bs_run_node = self["data"].parent
+        if bs_run_node.item["id"] == "streams" and ("BlueskyRun" not in {s.name for s in bs_run_node.specs}):
+            # The parent is the old "streams" node, go up one more level
+            bs_run_node = bs_run_node.parent
         stream_name = self.metadata.get("stream_name") or self["data"].item["id"]
         return [
             doc for name, doc in bs_run_node.documents() if name == "descriptor" and doc["name"] == stream_name
@@ -343,7 +347,11 @@ class BlueskyEventStreamV3(BlueskyEventStream, CompositeClient):
     def descriptors(self):
         # Go back to the BlueskyRun node and requests the documents
         stream_name = self.metadata.get("stream_name") or self.item["id"]
-        bs_run_node = self.parent.parent  # the path is: bs_run_node/streams/current_stream
+        # the path is: bs_run_node/streams/current_stream (old) or bs_run_node/current_stream (new)
+        bs_run_node = self.parent
+        if bs_run_node.item["id"] == "streams" and ("BlueskyRun" not in {s.name for s in bs_run_node.specs}):
+            # The parent is the old "streams" node, go up one more level
+            bs_run_node = bs_run_node.parent
         return [
             doc for name, doc in bs_run_node.documents() if name == "descriptor" and doc["name"] == stream_name
         ]

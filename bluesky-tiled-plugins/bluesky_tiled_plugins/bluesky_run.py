@@ -241,7 +241,19 @@ class _BlueskyRunSQL(BlueskyRun):
 
     @functools.cached_property
     def _stream_names(self):
-        return sorted(self.get("streams", ()))
+        if ("streams" not in self) or ("BlueskyEventStream" in {s.name for s in self["streams"].specs}):
+            # No intermediate "streams" node, use the top-level keys
+            return sorted(k for k in self)
+        else:
+            return sorted(self.get("streams", ()))
+
+    @functools.cached_property
+    def _streams_node(self):
+        if ("streams" not in self) or ("BlueskyEventStream" in {s.name for s in self["streams"].specs}):
+            # No intermediate "streams" node, use the top-level keys
+            return self
+        else:
+            return self["streams"]
 
     def documents(self, fill=False):
         with io.BytesIO() as buffer:
@@ -258,9 +270,8 @@ class BlueskyRunV2SQL(BlueskyRunV2, _BlueskyRunSQL):
         return (yield from keys[start:stop])
 
     def _items_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
-        _streams_node = super().get("streams", {})
         for key in reversed(self._stream_names) if direction < 0 else self._stream_names:
-            yield key, _streams_node.get(key)
+            yield key, self._streams_node.get(key)
         return
 
     def __getitem__(self, key):
@@ -269,7 +280,7 @@ class BlueskyRunV2SQL(BlueskyRunV2, _BlueskyRunSQL):
             return super().__getitem__(key)
 
         if key in self._stream_names:
-            stream_container = super().get("streams", {}).get(key)
+            stream_container = self._streams_node.get(key)
             return BlueskyEventStreamV2SQL.from_stream_client(stream_container)
 
         return super().__getitem__(key)
@@ -293,7 +304,7 @@ class BlueskyRunV3(_BlueskyRunSQL):
     def __getattr__(self, key):
         if key in self._stream_names:
             # A shortcut to the stream data
-            return self["streams"][key]
+            return self._streams_node[key]
 
         return super().__getattr__(key)
 
