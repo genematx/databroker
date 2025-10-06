@@ -227,7 +227,14 @@ class _BlueskyRunSQL(BlueskyRun):
 
         if "/" in key:
             key, rest = key.split("/", 1)
-            stream_container = self[key]
+            try:
+                stream_container = self[key]
+            except KeyError as e:
+                if key != "streams":
+                    stream_container = self["streams"]
+                    rest = f"{key}/{rest}"
+                else:
+                    raise
             try:
                 return stream_container[rest]
             except KeyError as e:
