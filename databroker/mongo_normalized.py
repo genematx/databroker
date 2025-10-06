@@ -395,13 +395,15 @@ class BlueskyRun(MapAdapter):
     def lookup_resource_for_datum(self, datum_id):
         doc = self._datum_collection.find_one({"datum_id": datum_id})
         if doc is None:
-            raise ValueError(f"Could not find Datum with datum_id={datum_id}")
+            # raise ValueError(f"Could not find Datum with datum_id={datum_id}")
+            return datum_id.split("/")[0]
         return doc["resource"]
 
     def single_documents(self, fill):
         if fill:
             raise NotImplementedError("Only fill=False is implemented.")
         external_fields = {}  # map descriptor uid to set of external fields
+        skip_fields = set()   # set of external fields that are missing Resource documents and can be skipped
         datum_cache = {}  # map datum_id to datum document
         # Track which Resource and Datum documents we have yielded so far.
         resource_uids = set()
@@ -415,28 +417,37 @@ class BlueskyRun(MapAdapter):
         for name, doc in merged_iter:
             # Insert Datum, Resource as needed, and then yield (name, doc).
             if name == "event":
-                for field in external_fields[doc["descriptor"]]:
-                    datum_id = doc["data"][field]
-                    if datum_ids not in datum_ids:
+                for field in external_fields[doc["descriptor"]] - skip_fields:
+                    datum_id = doc["data"].get(field, None)
+                    if (datum_id is not None) and (datum_id not in datum_ids):
                         # We haven't yielded this Datum yet. Look it up, and yield it.
-                        try:
-                            # Check to see if it's been pre-fetched.
-                            datum = datum_cache.pop(datum_id)
-                        except KeyError:
+                        if datum := datum_cache.pop(datum_id, None):
+                            pass
+                        else:
                             resource_uid = self.lookup_resource_for_datum(datum_id)
                             if resource_uid not in resource_uids:
                                 # We haven't yielded this Resource yet. Look it up, and yield it.
-                                resource = self.get_resource(resource_uid)
                                 resource_uids.add(resource_uid)
-                                yield ("resource", resource)
+                                try:
+                                    resource = self.get_resource(resource_uid)
+                                    yield ("resource", resource)
+                                except ValueError:
+                                    # We couldn't find the Resource.
+                                    logger.warning(
+                                        f"Could not find Resource with uid={resource_uid} "
+                                        f"referenced by Datum {datum_id!r}"
+                                    )
+                                    skip_fields.add(field)
+                                    continue
                                 # Pre-fetch *all* the Datum documents for this resource in one query.
                                 datum_cache.update(
                                     {doc["datum_id"]: doc for doc in self.get_datum_for_resource(resource_uid)}
                                 )
                                 # Now get the Datum we originally were looking for.
-                                datum = datum_cache.pop(datum_id)
-                            datum_ids.add(datum_id)
-                        yield ("datum", datum)
+                                datum = datum_cache.pop(datum_id, None)
+                        datum_ids.add(datum_id)
+                        if datum is not None:
+                            yield ("datum", datum)
             elif name == "descriptor":
                 # Track which fields ("data keys") hold references to external data.
                 external_fields[doc["uid"]] = {
