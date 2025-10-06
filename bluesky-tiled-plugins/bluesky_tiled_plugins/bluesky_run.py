@@ -227,14 +227,7 @@ class _BlueskyRunSQL(BlueskyRun):
 
         if "/" in key:
             key, rest = key.split("/", 1)
-            try:
-                stream_container = self[key]
-            except KeyError as e:
-                if key != "streams":
-                    stream_container = self["streams"]
-                    rest = f"{key}/{rest}"
-                else:
-                    raise
+            stream_container = self[key]
             try:
                 return stream_container[rest]
             except KeyError as e:
@@ -246,7 +239,13 @@ class _BlueskyRunSQL(BlueskyRun):
                 except KeyError:
                     raise KeyError(f"Key '{rest[-1]}' not found in the BlueskyRun container") from e
 
-        return super().__getitem__(key)
+        try:
+            return super().__getitem__(key)
+        except KeyError as e:
+            if key != "streams":
+                return self["streams"][key]
+            else:
+                raise KeyError(f"Key '{key}' not found in the BlueskyRun container")
 
     @functools.cached_property
     def _stream_names(self):
