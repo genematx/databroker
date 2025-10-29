@@ -29,11 +29,6 @@ CUSTOM_ADAPTERS_BY_MIMETYPE = OneShotCachedMap[str, type](
 ADAPTERS_BY_MIMETYPE = collections.ChainMap(CUSTOM_ADAPTERS_BY_MIMETYPE, DEFAULT_ADAPTERS_BY_MIMETYPE)
 
 
-# TODO: Move Consolidator classes into external repo (probably area-detector-handlers) and use the existing
-# handler discovery mechanism.
-# GitHub Issue: https://github.com/bluesky/bluesky/issues/1740
-
-
 def list_summands(A: int, b: int, repeat: int = 1) -> tuple[int, ...]:
     # Generate a list with repeated b summing up to A; append the remainder if necessary
     # e.g. list_summands(13, 3) = [3, 3, 3, 3, 1]
