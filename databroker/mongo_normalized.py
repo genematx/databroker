@@ -396,7 +396,7 @@ class BlueskyRun(MapAdapter):
         doc = self._datum_collection.find_one({"datum_id": datum_id})
         if doc is None:
             # raise ValueError(f"Could not find Datum with datum_id={datum_id}")
-            return datum_id.split("/")[0]
+            return str(datum_id).split("/")[0]
         return doc["resource"]
 
     def single_documents(self, fill):
