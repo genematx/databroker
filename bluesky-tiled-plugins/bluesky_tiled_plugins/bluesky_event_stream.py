@@ -240,10 +240,10 @@ class CompositeSubsetClient(CompositeClient):
         return node_repr(self, self._keys).replace(type(self).__name__, "DatasetClient")
 
     def _keys_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
-        yield from self._keys[start : stop : -1 if direction < 0 else 1]  # noqa: #203
+        yield from self._keys[start : stop : -1 if direction < 0 else 1]  # noqa: 203
 
     def _items_slice(self, start, stop, direction, page_size: Optional[int] = None, **kwargs):
-        for key in self._keys[start : stop : -1 if direction < 0 else 1]:  # noqa: #203
+        for key in self._keys[start : stop : -1 if direction < 0 else 1]:  # noqa: 203
             yield key, self[key]
 
     def __iter__(self):
