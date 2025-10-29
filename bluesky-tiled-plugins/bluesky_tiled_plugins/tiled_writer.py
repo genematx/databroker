@@ -477,7 +477,6 @@ class RunNormalizer(CallbackBase):
 
     def datum(self, doc: Datum):
         doc = copy.copy(doc)
-
         # Mark the Datum document with the spec of the corresponding Resource, if known
         if spec := self._specs_by_resource_uid.get(doc["resource"]):
             doc["datum_kwargs"] = doc.get("datum_kwargs", {}) | {"_resource_spec": spec}
