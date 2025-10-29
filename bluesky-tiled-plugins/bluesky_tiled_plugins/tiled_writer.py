@@ -5,8 +5,8 @@ from collections import defaultdict, deque, namedtuple
 from pathlib import Path
 from typing import Any, Callable, Optional, Union, cast
 from warnings import warn
-import numpy
 
+import numpy
 import pyarrow
 from bluesky.callbacks.core import CallbackBase
 from bluesky.callbacks.json_writer import JSONLinesWriter
@@ -35,6 +35,7 @@ from event_model.documents import (
 from event_model.documents.event_descriptor import DataKey
 from event_model.documents.stream_datum import StreamRange
 from tiled.client import from_profile, from_uri
+from tiled.client.array import ArrayClient
 from tiled.client.base import BaseClient
 from tiled.client.container import Container
 from tiled.client.dataframe import DataFrameClient
@@ -204,7 +205,7 @@ class RunNormalizer(CallbackBase):
         self._int_keys: set[str] = set()  # Names of internal data_keys
         self._ext_keys: set[str] = set()
         self._specs_by_resource_uid = {}  # Keep track of spec by Resource uid, used to enrich datum_kwargs
-        self.notes: list[str] = []    # Human-readable notes about modifications made to the documents
+        self.notes: list[str] = []  # Human-readable notes about modifications made to the documents
 
     def _convert_resource_to_stream_resource(self, doc: Union[Resource, StreamResource]) -> StreamResource:
         """Make changes to and return a shallow copy of StreamRsource dictionary adhering to the new structure.
@@ -529,7 +530,12 @@ class _RunWriter(CallbackBase):
             The Tiled client to use for writing the data.
     """
 
-    def __init__(self, client: BaseClient, batch_size: int = BATCH_SIZE, max_internal_array_size: int = MAX_INTERNAL_ARRAY_SIZE):
+    def __init__(
+        self,
+        client: BaseClient,
+        batch_size: int = BATCH_SIZE,
+        max_internal_array_size: int = MAX_INTERNAL_ARRAY_SIZE,
+    ):
         self.client = client
         self.root_node: Union[None, Container] = None
         self._desc_nodes: dict[str, Container] = {}  # references to the descriptor nodes by their uid's and names
@@ -558,11 +564,9 @@ class _RunWriter(CallbackBase):
                 # Create a new "internal" array data node and write the initial piece of data
                 metadata = truncate_json_overflow(self.data_keys.get(key, {}))
                 dims = ("time",) + tuple(f"dim_{i}" for i in range(1, array.ndim))
-                arr_client = desc_node.write_array(array, 
-                            key=key,
-                            metadata=metadata,
-                            dims=dims,
-                            access_tags=self.access_tags)
+                arr_client = desc_node.write_array(
+                    array, key=key, metadata=metadata, dims=dims, access_tags=self.access_tags
+                )
                 self._internal_arrays[f"{desc_name}/{key}"] = arr_client
             else:
                 arr_client.patch(array, offset=arr_client.shape[:1], extend=True)
@@ -644,7 +648,7 @@ class _RunWriter(CallbackBase):
                 data_cache.clear()
 
         # Write the cached StreamDatums data; only update the data_source _once_ per each StreamResource node
-        updated_node_and_cons = set()     # type: set[tuple[BaseClient, ConsolidatorBase]]
+        updated_node_and_cons = set()  # type: set[tuple[BaseClient, ConsolidatorBase]]
         for stream_datum_doc in self._external_data_cache.values():
             sres_node, consolidator, _ = self._update_consolidator(stream_datum_doc)
             updated_node_and_cons.add((sres_node, consolidator))
@@ -653,7 +657,9 @@ class _RunWriter(CallbackBase):
 
         # Validate structure for some StreamResource nodes, select unique pairs of (sres_node, consolidator)
         notes = []
-        node_and_cons = {(sres_node, self._consolidators[sres_uid]) for sres_uid, sres_node in self._sres_nodes.items()}
+        node_and_cons = {
+            (sres_node, self._consolidators[sres_uid]) for sres_uid, sres_node in self._sres_nodes.items()
+        }
         for sres_node, consolidator in node_and_cons:
             if consolidator._sres_parameters.get("_validate", False):
                 title = f"Validation of data key '{sres_node.item['id']}'"
@@ -691,7 +697,11 @@ class _RunWriter(CallbackBase):
             ).base
             # Keep track of keys for internal array data to be written as zarr, if any
             for key, val in doc.get("data_keys", {}).items():
-                if ("external" not in val.keys()) and (val.get("dtype") == "array") and (0 <= self._max_internal_array_size < sum(val.get("shape", []))):
+                if (
+                    ("external" not in val.keys())
+                    and (val.get("dtype") == "array")
+                    and (0 <= self._max_internal_array_size < sum(val.get("shape", [])))
+                ):
                     self._int_array_keys[desc_name].add(key)
         else:
             # Rare Case: This new descriptor likely updates stream configs mid-experiment
@@ -847,7 +857,7 @@ class TiledWriter:
         spec_to_mimetype: Optional[dict[str, str]] = None,
         backup_directory: Optional[str] = None,
         batch_size: int = BATCH_SIZE,
-        max_internal_array_size: int = MAX_INTERNAL_ARRAY_SIZE
+        max_internal_array_size: int = MAX_INTERNAL_ARRAY_SIZE,
     ):
         self.client = client.include_data_sources()
         self.patches = patches or {}
@@ -860,7 +870,9 @@ class TiledWriter:
 
     def _factory(self, name, doc):
         """Factory method to create a callback for writing a single run into Tiled."""
-        cb = run_writer = _RunWriter(self.client, batch_size=self._batch_size, max_internal_array_size=self._max_internal_array_size)
+        cb = run_writer = _RunWriter(
+            self.client, batch_size=self._batch_size, max_internal_array_size=self._max_internal_array_size
+        )
 
         if self._normalizer:
             # If normalize is True, create a RunNormalizer callback to update documents to the latest schema

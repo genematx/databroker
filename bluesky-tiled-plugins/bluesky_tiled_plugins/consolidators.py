@@ -1,7 +1,7 @@
 import collections
 import dataclasses
-import importlib
 import enum
+import importlib
 import math
 import os
 import re
@@ -17,12 +17,15 @@ from tiled.utils import OneShotCachedMap
 MAX_CSV_ROWS_PER_CHUNK = 5000
 # User-provided adapters take precedence over defaults.
 CUSTOM_ADAPTERS_BY_MIMETYPE = OneShotCachedMap[str, type](
-    {"application/x-pizzabox-binary": lambda: importlib.import_module(
+    {
+        "application/x-pizzabox-binary": lambda: importlib.import_module(
             "mng2sql.adapters.pizzabox", __name__
         ).PizzaBoxAdapter,
-     "application/x-hdf5;type=xia-xmap": lambda: importlib.import_module(
+        "application/x-hdf5;type=xia-xmap": lambda: importlib.import_module(
             "mng2sql.adapters.xiaxmap", __name__
-        ).XIAxMAPAdapter})
+        ).XIAxMAPAdapter,
+    }
+)
 ADAPTERS_BY_MIMETYPE = collections.ChainMap(CUSTOM_ADAPTERS_BY_MIMETYPE, DEFAULT_ADAPTERS_BY_MIMETYPE)
 
 
@@ -30,11 +33,13 @@ ADAPTERS_BY_MIMETYPE = collections.ChainMap(CUSTOM_ADAPTERS_BY_MIMETYPE, DEFAULT
 # handler discovery mechanism.
 # GitHub Issue: https://github.com/bluesky/bluesky/issues/1740
 
+
 def list_summands(A: int, b: int, repeat: int = 1) -> tuple[int, ...]:
     # Generate a list with repeated b summing up to A; append the remainder if necessary
     # e.g. list_summands(13, 3) = [3, 3, 3, 3, 1]
     # if `repeat = n`, n > 1, copy and repeat the entire result n times
     return tuple([b] * (A // b) + ([A % b] if A % b > 0 else [])) * repeat or (0,)
+
 
 class StructureFamily(str, enum.Enum):
     array = "array"
@@ -395,18 +400,20 @@ class CSVConsolidator(ConsolidatorBase):
     join_chunks: bool = False
 
     def adapter_parameters(self) -> dict:
-        allowed_keys = { 'comment',
-                                'delimiter',
-                                'dtype',
-                                'encoding',
-                                'header',
-                                'names',
-                                'nrows',
-                                'sep',
-                                'skipfooter',
-                                'skiprows',
-                                'usecols'}
-        return {k:v for k, v in {"header": None, **self._sres_parameters}.items() if k in allowed_keys}
+        allowed_keys = {
+            "comment",
+            "delimiter",
+            "dtype",
+            "encoding",
+            "header",
+            "names",
+            "nrows",
+            "sep",
+            "skipfooter",
+            "skiprows",
+            "usecols",
+        }
+        return {k: v for k, v in {"header": None, **self._sres_parameters}.items() if k in allowed_keys}
 
     def validate(self, adapters_by_mimetype=None, fix_errors=False) -> list[str]:
         # CSVConsolidator needs special handling to validate the structure when the data_type is StructDtype.
@@ -418,7 +425,7 @@ class CSVConsolidator(ConsolidatorBase):
             from tiled.adapters.csv import CSVAdapter
 
             uris = [asset.data_uri for asset in self.assets]
-            adapter = CSVAdapter.from_uris(uris[0], **self.adapter_parameters())   # Initialize from the first file
+            adapter = CSVAdapter.from_uris(uris[0], **self.adapter_parameters())  # Initialize from the first file
             column_dtypes = adapter.structure().arrow_schema_decoded.types
             notes = []
 
@@ -428,7 +435,12 @@ class CSVConsolidator(ConsolidatorBase):
                 )
 
             # Construct the true StructDtype of the data as read by the adapter
-            true_numpy_dtype = np.dtype([(expected.name, true.to_pandas_dtype()) for expected, true in zip(self.data_type.fields, column_dtypes)])
+            true_numpy_dtype = np.dtype(
+                [
+                    (expected.name, true.to_pandas_dtype())
+                    for expected, true in zip(self.data_type.fields, column_dtypes)
+                ]
+            )
             true_dtype = StructDtype.from_numpy_dtype(true_numpy_dtype)
 
             if self.data_type != true_dtype:
@@ -458,14 +470,16 @@ class CSVConsolidator(ConsolidatorBase):
                     msg = f"Fixed shape mismatch: {self.shape} -> {true_shape}"
                     warnings.warn(msg, stacklevel=2)
                     self._num_rows = true_shape[0]
-                    self.datum_shape = (1, 1) if self.join_method == "concat" else (1, )
+                    self.datum_shape = (1, 1) if self.join_method == "concat" else (1,)
                     notes.append(msg)
 
             if self.chunks != true_chunks:
                 if not fix_errors:
                     raise ValueError(f"Chunk shape mismatch: {self.chunks} != {true_chunks}")
                 else:
-                    if len(true_chunks[0]) == 1 or (len(set(true_chunks[0][:-1])) == 1 and (true_chunks[0][-1] <= true_chunks[0][0])):
+                    if len(true_chunks[0]) == 1 or (
+                        len(set(true_chunks[0][:-1])) == 1 and (true_chunks[0][-1] <= true_chunks[0][0])
+                    ):
                         # Either single chunk or all chunks except possibly the last one are the same (larger) size
                         _chunk_shape = tuple(c[0] for c in true_chunks)
                         msg = f"Fixed chunk shape mismatch: {self.chunk_shape} -> {_chunk_shape}"
@@ -481,11 +495,18 @@ class CSVConsolidator(ConsolidatorBase):
 
             if self.dims and (len(self.dims) != len(true_shape)):
                 if not fix_errors:
-                    raise ValueError(f"Number of dimension names mismatch for a {len(true_shape)}-dimensional array: {self.dims}")  # noqa
+                    raise ValueError(
+                        "Number of dimension names mismatch for a "
+                        f"{len(true_shape)}-dimensional array: {self.dims}"
+                    )
                 else:
                     old_dims = self.dims
                     if len(old_dims) < len(true_shape):
-                        self.dims = ("time",) + old_dims + tuple(f"dim{i}" for i in range(len(old_dims)+1, len(true_shape)))
+                        self.dims = (
+                            ("time",)
+                            + old_dims
+                            + tuple(f"dim{i}" for i in range(len(old_dims) + 1, len(true_shape)))
+                        )
                     else:
                         self.dims = old_dims[: len(true_shape)]
                     msg = f"Fixed dimension names: {old_dims} -> {self.dims}"
@@ -539,7 +560,7 @@ class MultipartRelatedConsolidator(ConsolidatorBase):
     ):
         super().__init__(stream_resource, descriptor)
         self.permitted_extensions: set[str] = permitted_extensions
-        self.assets.clear()      # Assets will be populated based on datum indices
+        self.assets.clear()  # Assets will be populated based on datum indices
         self.data_uris: list[str] = []
         self.chunk_shape = self.chunk_shape or (1,)  # I.e. number of frames per file (tiff, jpeg, etc.)
         if self.join_method == "concat":

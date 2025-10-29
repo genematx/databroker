@@ -9,8 +9,6 @@ from typing import Optional
 
 from tiled.client.container import Container
 from tiled.client.utils import handle_error
-from tiled.utils import DictView, OneShotCachedMap, node_repr
-import xarray
 
 from ._common import IPYTHON_METHODS
 from .bluesky_event_stream import BlueskyEventStreamV2SQL
