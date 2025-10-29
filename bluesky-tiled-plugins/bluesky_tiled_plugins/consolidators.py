@@ -312,8 +312,9 @@ class ConsolidatorBase:
     def get_adapter(self):
         """Return an Adapter suitable for reading the data"""
 
-        # Mimic the necessary aspects of a Tiled node with a namedtuple
         adapter_class = ADAPTERS_BY_MIMETYPE[self.mimetype]
+
+        # Mimic the necessary aspects of a Tiled node with a namedtuple
         _Node = collections.namedtuple("Node", ["metadata_", "specs"])
         return adapter_class.from_catalog(self.get_data_source(), _Node({}, []), **self.adapter_parameters())
 
