@@ -700,6 +700,31 @@ class NPYConsolidator(MultipartRelatedConsolidator):
         super().__init__({".npy"}, stream_resource, descriptor)
 
 
+class PizzaBoxConsolidator(ConsolidatorBase):
+    supported_mimetypes: set[str] = {"application/x-pizzabox-binary"}
+
+    def validate(self, fix_errors=False) -> list[str]:
+        notes = super().validate(fix_errors=fix_errors)
+
+        # Initialize adapter from uris and try to locate missing files
+        adapter_class = DEFAULT_ADAPTERS_BY_MIMETYPE[self.mimetype]
+        uris = [asset.data_uri for asset in self.assets]
+        uri_bin, uri_txt = adapter_class.locate_files(*uris)
+
+        if uri_txt and uris == [uri_bin]:
+            if not fix_errors:
+                raise ValueError(f"Missing asset for PizzaBox binary metadata file: {uri_txt}")
+            else:
+                self.assets.append(Asset(data_uri=uri_txt, is_directory=False, parameter="metadata"))
+                msg = f"Registered missing asset for PizzaBox binary metadata file: {uri_txt.split('/')[-1]}"
+                warnings.warn(msg, stacklevel=2)
+                notes.append(msg)
+
+        assert self.init_adapter() is not None, "Adapter can not be initialized"
+
+        return notes
+
+
 CONSOLIDATOR_REGISTRY = collections.defaultdict(
     lambda: ConsolidatorBase,
     {
@@ -709,6 +734,7 @@ CONSOLIDATOR_REGISTRY = collections.defaultdict(
         "multipart/related;type=image/jpeg": JPEGConsolidator,
         "multipart/related;type=application/x-npy": NPYConsolidator,
         "application/x-hdf5;type=xia-xmap": HDF5Consolidator,
+        "application/x-pizzabox-binary": PizzaBoxConsolidator,
     },
 )
 
