@@ -1,20 +1,20 @@
 import collections
 import dataclasses
-import enum
 import importlib
 import math
 import os
 import re
 import warnings
-from typing import Any, Literal, Optional, Union, cast
+from typing import Literal, Union, cast
 
 import numpy as np
 from event_model.documents import EventDescriptor, StreamDatum, StreamResource
 from tiled.mimetypes import DEFAULT_ADAPTERS_BY_MIMETYPE
 from tiled.structures.array import ArrayStructure, BuiltinDtype, StructDtype
+from tiled.structures.core import StructureFamily
+from tiled.structures.data_source import Asset, DataSource, Management
 from tiled.utils import OneShotCachedMap
 
-MAX_CSV_ROWS_PER_CHUNK = 5000
 # User-provided adapters take precedence over defaults.
 CUSTOM_ADAPTERS_BY_MIMETYPE = OneShotCachedMap[str, type](
     {
@@ -26,7 +26,7 @@ CUSTOM_ADAPTERS_BY_MIMETYPE = OneShotCachedMap[str, type](
         ).XIAxMAPAdapter,
     }
 )
-ADAPTERS_BY_MIMETYPE = collections.ChainMap(CUSTOM_ADAPTERS_BY_MIMETYPE, DEFAULT_ADAPTERS_BY_MIMETYPE)
+DEFAULT_ADAPTERS_BY_MIMETYPE = collections.ChainMap(CUSTOM_ADAPTERS_BY_MIMETYPE, DEFAULT_ADAPTERS_BY_MIMETYPE)
 
 
 def list_summands(A: int, b: int, repeat: int = 1) -> tuple[int, ...]:
@@ -34,41 +34,6 @@ def list_summands(A: int, b: int, repeat: int = 1) -> tuple[int, ...]:
     # e.g. list_summands(13, 3) = [3, 3, 3, 3, 1]
     # if `repeat = n`, n > 1, copy and repeat the entire result n times
     return tuple([b] * (A // b) + ([A % b] if A % b > 0 else [])) * repeat or (0,)
-
-
-class StructureFamily(str, enum.Enum):
-    array = "array"
-    awkward = "awkward"
-    container = "container"
-    sparse = "sparse"
-    table = "table"
-
-
-class Management(str, enum.Enum):
-    external = "external"
-    immutable = "immutable"
-    locked = "locked"
-    writable = "writable"
-
-
-@dataclasses.dataclass
-class Asset:
-    data_uri: str
-    is_directory: bool
-    parameter: Optional[str]
-    num: Optional[int] = None
-    id: Optional[int] = None
-
-
-@dataclasses.dataclass
-class DataSource:
-    structure_family: StructureFamily
-    structure: Any
-    id: Optional[int] = None
-    mimetype: Optional[str] = None
-    parameters: dict = dataclasses.field(default_factory=dict)
-    assets: list[Asset] = dataclasses.field(default_factory=list)
-    management: Management = Management.writable
 
 
 @dataclasses.dataclass
@@ -304,10 +269,19 @@ class ConsolidatorBase:
             management=Management.external,
         )
 
-    def get_adapter(self):
-        """Return an Adapter suitable for reading the data"""
+    def init_adapter(self, adapter_class=None):
+        """Initialize a Tiled Adapter for reading the consolidated data
 
-        adapter_class = ADAPTERS_BY_MIMETYPE[self.mimetype]
+        Parameters
+        ----------
+        adapter_class : Optional[Type[Adapter]]
+            An optional Adapter class to use for initialization; if not provided, the default adapter for the
+            Consolidator's mimetype will be used.
+        """
+
+        adapter_class = adapter_class or DEFAULT_ADAPTERS_BY_MIMETYPE.get(self.mimetype)
+        if not adapter_class:
+            raise ValueError(f"No adapter found for mimetype {self.mimetype}")
 
         # Mimic the necessary aspects of a Tiled node with a namedtuple
         _Node = collections.namedtuple("Node", ["metadata_", "specs"])
@@ -318,11 +292,11 @@ class ConsolidatorBase:
 
         raise NotImplementedError("This method is not implemented in the base Consolidator class.")
 
-    def validate(self, adapters_by_mimetype=None, fix_errors=False) -> list[str]:
+    def validate(self, fix_errors=False) -> list[str]:
         """Validate the Consolidator's state against the expected structure"""
 
         # Initialize adapter from uris and determine the structure
-        adapter_class = ADAPTERS_BY_MIMETYPE[self.mimetype]
+        adapter_class = DEFAULT_ADAPTERS_BY_MIMETYPE[self.mimetype]
         uris = [asset.data_uri for asset in self.assets]
         structure = adapter_class.from_uris(*uris, **self.adapter_parameters()).structure()
         notes = []
@@ -385,9 +359,19 @@ class ConsolidatorBase:
                 warnings.warn(msg, stacklevel=2)
                 notes.append(msg)
 
-        assert self.get_adapter() is not None, "Adapter can not be initialized"
+        assert self.init_adapter() is not None, "Adapter can not be initialized"
 
         return notes
+
+    def get_adapter(self, adapters_by_mimetype=None):
+        warnings.warn(
+            f"{self.__class__.__name__}.get_adapter is deprecated and will be removed in a future release; "
+            f"please, use {self.__class__.__name__}.init_adapter instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        adapter_class = (adapters_by_mimetype or {}).get(self.mimetype)
+        return self.init_adapter(adapter_class=adapter_class)
 
 
 class CSVConsolidator(ConsolidatorBase):
