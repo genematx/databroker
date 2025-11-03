@@ -38,6 +38,20 @@ classifiers = [
 
 dynamic = ["version"]
 
+[dependency-groups]
+dev = [
+    "numpydoc",
+    "pre-commit",
+    "pydata-sphinx-theme>=0.15",
+    "pytest",
+    "ruff",
+    "sphinx-autobuild",
+    "sphinx-autodoc2",
+    "sphinxcontrib-mermaid",
+    "sphinx-copybutton",
+    "sphinx-design",
+]
+
 [project.entry-points."tiled.special_client"]
 CatalogOfBlueskyRuns = "bluesky_tiled_plugins.clients.catalog_of_bluesky_runs:CatalogOfBlueskyRuns"
 BlueskyRun = "bluesky_tiled_plugins.clients.bluesky_run:BlueskyRun"
